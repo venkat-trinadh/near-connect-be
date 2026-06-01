@@ -1,13 +1,82 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
+datasource db {
+  provider = "postgresql"
+}
 
 generator client {
   provider = "prisma-client"
-  output   = "../generated/prisma"
+  output          = "../src/generated/prisma"
+  moduleFormat  = "cjs"
 }
 
-datasource db {
-  provider = "postgresql"
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id              Int   @id @default(autoincrement())
+  email           String   @unique
+  fullName        String
+  password        String?  // nullable — Google-OAuth users have no password
+  googleId        String?  @unique
+  isEmailVerified Boolean  @default(false)
+  isPhoneVerified Boolean  @default(false)
+  phoneNumber     String?
+  countryCode     String?  // e.g. "+1"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  otpCodes                OtpCode[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+
+  @@map("users")
+}
+
+// ─── OTP (Phone Verification) ────────────────────────────────────────────────
+
+model OtpCode {
+  id          Int   @id @default(autoincrement())
+  userId      Int
+  phone       String   // full phone with country code, e.g. "+15550001234"
+  code        String
+  attempts    Int      @default(0)  // wrong-attempt counter; locked at MAX_OTP_ATTEMPTS
+  resendCount Int      @default(0)  // resend counter for this OTP session
+  expiresAt   DateTime
+  isUsed      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("otp_codes")
+}
+
+// ─── Email Verification ───────────────────────────────────────────────────────
+
+model EmailVerificationToken {
+  id        Int   @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  isUsed    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification_tokens")
+}
+
+// ─── Password Reset ───────────────────────────────────────────────────────────
+
+model PasswordResetToken {
+  id        Int   @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  isUsed    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
 }
