@@ -3,7 +3,6 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +14,7 @@ import { SmsService } from '../sms/sms.service';
 import { RegisterDto } from './dto/register.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { catchBlock } from '../common/util/CatchBlock';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ const MAX_OTP_RESENDS = 3;
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface SafeUser {
-  id: string;
+  id: number;
   email: string;
   fullName: string;
   isEmailVerified: boolean;
@@ -47,90 +47,112 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly sms: SmsService,
-  ) {}
+  ) { }
 
   // ─── Registration ─────────────────────────────────────────────────────────
 
-  async register(dto: RegisterDto): Promise<{ accessToken: string; user: SafeUser }> {
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() },
-    });
+  async register(dto: RegisterDto) {
+    try {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: dto.email.toLowerCase() },
+      });
 
-    if (existing) {
-      throw new ConflictException('An account with this email already exists');
+      if (existing) {
+        throw new ConflictException('An account with this email already exists');
+      }
+
+      const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+
+      const user = await this.prisma.user.create({
+        data: {
+          email: dto.email.toLowerCase(),
+          fullName: dto.fullName.trim(),
+          password: hashedPassword,
+        },
+      });
+
+      // Fire-and-forget — don't block registration if email fails
+      this.issueEmailVerificationToken(user.id, user.email, user.fullName).catch(
+        () => void 0,
+      );
+
+      const accessToken = this.signToken(user.id, user.email);
+      const data = { accessToken, user: this.toSafeUser(user) }
+      const result = { message: 'Account created. Please verify your email to continue.', data };
+      return result;
+    } catch (error) {
+      catchBlock(error)
     }
-
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email.toLowerCase(),
-        fullName: dto.fullName.trim(),
-        password: hashedPassword,
-      },
-    });
-
-    // Fire-and-forget — don't block registration if email fails
-    this.issueEmailVerificationToken(user.id, user.email, user.fullName).catch(
-      () => void 0,
-    );
-
-    const accessToken = this.signToken(user.id, user.email);
-    return { accessToken, user: this.toSafeUser(user) };
   }
 
   // ─── Email verification ───────────────────────────────────────────────────
 
   async verifyEmail(token: string): Promise<void> {
-    const record = await this.prisma.emailVerificationToken.findUnique({
-      where: { token },
-      include: { user: true },
-    });
+    try {
+      const record = await this.prisma.emailVerificationToken.findUnique({
+        where: { token },
+        include: { user: true },
+      });
 
-    if (!record || record.isUsed || record.expiresAt < new Date()) {
-      throw new BadRequestException('Verification link is invalid or has expired');
+      if (!record || record.isUsed || record.expiresAt < new Date()) {
+        throw new BadRequestException('Verification link is invalid or has expired');
+      }
+
+      await this.prisma.$transaction([
+        this.prisma.emailVerificationToken.update({
+          where: { id: record.id },
+          data: { isUsed: true },
+        }),
+        this.prisma.user.update({
+          where: { id: record.userId },
+          data: { isEmailVerified: true },
+        }),
+      ]);
+    } catch (error) {
+      catchBlock(error);
     }
-
-    await this.prisma.$transaction([
-      this.prisma.emailVerificationToken.update({
-        where: { id: record.id },
-        data: { isUsed: true },
-      }),
-      this.prisma.user.update({
-        where: { id: record.userId },
-        data: { isEmailVerified: true },
-      }),
-    ]);
   }
 
   async resendVerificationEmail(email: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+      });
 
-    // Silently succeed even when the email doesn't exist — prevents user enumeration
-    if (!user || user.isEmailVerified) return;
+      // Silently succeed even when the email doesn't exist — prevents user enumeration
+      if (!user || user.isEmailVerified) return;
 
-    await this.issueEmailVerificationToken(user.id, user.email, user.fullName);
+      await this.issueEmailVerificationToken(user.id, user.email, user.fullName);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Login ────────────────────────────────────────────────────────────────
 
-  async validateLocalUser(email: string, password: string): Promise<SafeUser | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
+  async validateLocalUser(email: string, password: string) {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+      });
 
-    if (!user || !user.password) return null;
+      if (!user || !user.password) return null;
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return null;
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return null;
 
-    return this.toSafeUser(user);
+      return this.toSafeUser(user);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
-  login(user: SafeUser): { accessToken: string; user: SafeUser } {
-    return { accessToken: this.signToken(user.id, user.email), user };
+  login(user: SafeUser){
+    try {
+      return { accessToken: this.signToken(user.id, user.email), user };
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Google OAuth ─────────────────────────────────────────────────────────
@@ -139,206 +161,242 @@ export class AuthService {
     googleId: string;
     email: string;
     fullName: string;
-  }): Promise<SafeUser> {
-    const { googleId, email, fullName } = profile;
+  }) {
+    try {
+      const { googleId, email, fullName } = profile;
 
-    // Try to find by googleId first, then fall back to email
-    let user = await this.prisma.user.findFirst({
-      where: { OR: [{ googleId }, { email: email.toLowerCase() }] },
-    });
+      // Try to find by googleId first, then fall back to email
+      let user = await this.prisma.user.findFirst({
+        where: { OR: [{ googleId }, { email: email.toLowerCase() }] },
+      });
 
-    if (user) {
-      // Link Google ID if the account was previously created with email/password
-      if (!user.googleId) {
-        user = await this.prisma.user.update({
-          where: { id: user.id },
-          data: { googleId, isEmailVerified: true },
+      if (user) {
+        // Link Google ID if the account was previously created with email/password
+        if (!user.googleId) {
+          user = await this.prisma.user.update({
+            where: { id: user.id },
+            data: { googleId, isEmailVerified: true },
+          });
+        }
+      } else {
+        // Create a new Google-only account — email is pre-verified by Google
+        user = await this.prisma.user.create({
+          data: {
+            email: email.toLowerCase(),
+            fullName,
+            googleId,
+            isEmailVerified: true,
+          },
         });
       }
-    } else {
-      // Create a new Google-only account — email is pre-verified by Google
-      user = await this.prisma.user.create({
-        data: {
-          email: email.toLowerCase(),
-          fullName,
-          googleId,
-          isEmailVerified: true,
-        },
-      });
-    }
 
-    return this.toSafeUser(user);
+      return this.toSafeUser(user);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
-  googleLogin(user: SafeUser): { accessToken: string; user: SafeUser } {
-    return this.login(user);
+  googleLogin(user: SafeUser){
+    try {
+      return this.login(user);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Phone OTP ────────────────────────────────────────────────────────────
 
-  async sendOtp(userId: string, dto: SendOtpDto): Promise<void> {
-    const fullPhone = `${dto.countryCode}${dto.phoneNumber}`;
+  async sendOtp(userId: number, dto: SendOtpDto): Promise<void> {
+    try {
+      const fullPhone = `${dto.countryCode}${dto.phoneNumber}`;
 
-    // Check if this phone is already verified by another account
-    const phoneOwner = await this.prisma.user.findFirst({
-      where: {
-        phoneNumber: dto.phoneNumber,
-        countryCode: dto.countryCode,
-        isPhoneVerified: true,
-        NOT: { id: userId },
-      },
-    });
-
-    if (phoneOwner) {
-      throw new ConflictException('This phone number is already associated with another account');
-    }
-
-    // Check resend rate limit using the most recent non-expired OTP for this user
-    const latestOtp = await this.prisma.otpCode.findFirst({
-      where: { userId, isUsed: false, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (latestOtp && latestOtp.resendCount >= MAX_OTP_RESENDS) {
-      throw new BadRequestException(
-        `You have reached the maximum resend limit. Please wait ${OTP_TTL_MINUTES} minutes and try again.`,
-      );
-    }
-
-    if (latestOtp) {
-      // Increment resend counter instead of creating a new OTP record
-      await this.prisma.otpCode.update({
-        where: { id: latestOtp.id },
-        data: { resendCount: { increment: 1 } },
+      // Check if this phone is already verified by another account
+      const phoneOwner = await this.prisma.user.findFirst({
+        where: {
+          phoneNumber: dto.phoneNumber,
+          countryCode: dto.countryCode,
+          isPhoneVerified: true,
+          NOT: { id: userId },
+        },
       });
-      await this.sms.sendOtp(fullPhone, latestOtp.code);
-      return;
+
+      if (phoneOwner) {
+        throw new ConflictException('This phone number is already associated with another account');
+      }
+
+      // Check resend rate limit using the most recent non-expired OTP for this user
+      const latestOtp = await this.prisma.otpCode.findFirst({
+        where: { userId, isUsed: false, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (latestOtp && latestOtp.resendCount >= MAX_OTP_RESENDS) {
+        throw new BadRequestException(
+          `You have reached the maximum resend limit. Please wait ${OTP_TTL_MINUTES} minutes and try again.`,
+        );
+      }
+
+      if (latestOtp) {
+        // Increment resend counter instead of creating a new OTP record
+        await this.prisma.otpCode.update({
+          where: { id: latestOtp.id },
+          data: { resendCount: { increment: 1 } },
+        });
+        await this.sms.sendOtp(fullPhone, latestOtp.code);
+        return;
+      }
+
+      // Generate a new OTP
+      const code = this.generateOtp();
+      const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+
+      await this.prisma.otpCode.create({
+        data: { userId, phone: fullPhone, code, expiresAt },
+      });
+
+      // Save phone on user record (not yet verified)
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { phoneNumber: dto.phoneNumber, countryCode: dto.countryCode },
+      });
+
+      await this.sms.sendOtp(fullPhone, code);
+    } catch (error) {
+      catchBlock(error);
     }
-
-    // Generate a new OTP
-    const code = this.generateOtp();
-    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
-
-    await this.prisma.otpCode.create({
-      data: { userId, phone: fullPhone, code, expiresAt },
-    });
-
-    // Save phone on user record (not yet verified)
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { phoneNumber: dto.phoneNumber, countryCode: dto.countryCode },
-    });
-
-    await this.sms.sendOtp(fullPhone, code);
   }
 
-  async verifyOtp(userId: string, code: string): Promise<void> {
-    const otp = await this.prisma.otpCode.findFirst({
-      where: { userId, isUsed: false, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!otp) {
-      throw new BadRequestException('No active verification code found. Please request a new one.');
-    }
-
-    if (otp.attempts >= MAX_OTP_ATTEMPTS) {
-      throw new BadRequestException(
-        'Too many incorrect attempts. Please request a new code.',
-      );
-    }
-
-    if (otp.code !== code) {
-      await this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
+  async verifyOtp(userId: number, code: string): Promise<void> {
+    try {
+      const otp = await this.prisma.otpCode.findFirst({
+        where: { userId, isUsed: false, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
       });
 
-      const remaining = MAX_OTP_ATTEMPTS - (otp.attempts + 1);
-      throw new BadRequestException(
-        remaining > 0
-          ? `Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
-          : 'Too many incorrect attempts. Please request a new code.',
-      );
-    }
+      if (!otp) {
+        throw new BadRequestException('No active verification code found. Please request a new one.');
+      }
 
-    // Mark OTP as used and mark phone as verified in one transaction
-    await this.prisma.$transaction([
-      this.prisma.otpCode.update({
-        where: { id: otp.id },
-        data: { isUsed: true },
-      }),
-      this.prisma.user.update({
-        where: { id: userId },
-        data: { isPhoneVerified: true },
-      }),
-    ]);
+      if (otp.attempts >= MAX_OTP_ATTEMPTS) {
+        throw new BadRequestException(
+          'Too many incorrect attempts. Please request a new code.',
+        );
+      }
+
+      if (otp.code !== code) {
+        await this.prisma.otpCode.update({
+          where: { id: otp.id },
+          data: { attempts: { increment: 1 } },
+        });
+
+        const remaining = MAX_OTP_ATTEMPTS - (otp.attempts + 1);
+        throw new BadRequestException(
+          remaining > 0
+            ? `Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
+            : 'Too many incorrect attempts. Please request a new code.',
+        );
+      }
+
+      // Mark OTP as used and mark phone as verified in one transaction
+      await this.prisma.$transaction([
+        this.prisma.otpCode.update({
+          where: { id: otp.id },
+          data: { isUsed: true },
+        }),
+        this.prisma.user.update({
+          where: { id: userId },
+          data: { isPhoneVerified: true },
+        }),
+      ]);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Forgot / Reset password ──────────────────────────────────────────────
 
   async forgotPassword(email: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+      });
 
-    // Silently succeed — prevents user enumeration
-    if (!user || user.googleId) return;
+      if (!user) {
+        // Don't reveal whether the email exists
+        return;
+      }
 
-    // Invalidate previous tokens before issuing a new one
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, isUsed: false },
-      data: { isUsed: true },
-    });
+      if (user.googleId) {
+        throw new BadRequestException(
+          'This account uses Google Sign-In. Please continue with Google.'
+        );
+      }
 
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
+      // Invalidate previous tokens before issuing a new one
+      await this.prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, isUsed: false },
+        data: { isUsed: true },
+      });
 
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, token, expiresAt },
-    });
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
 
-    await this.mail.sendPasswordResetEmail(user.email, user.fullName, token);
+      await this.prisma.passwordResetToken.create({
+        data: { userId: user.id, token, expiresAt },
+      });
+
+      await this.mail.sendPasswordResetEmail(user.email, user.fullName, token);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { token: dto.token },
-      include: { user: true },
-    });
+    try {
+      const record = await this.prisma.passwordResetToken.findUnique({
+        where: { token: dto.token },
+        include: { user: true },
+      });
 
-    if (!record || record.isUsed || record.expiresAt < new Date()) {
-      throw new BadRequestException('Reset link is invalid or has expired');
+      if (!record || record.isUsed || record.expiresAt < new Date()) {
+        throw new BadRequestException('Reset link is invalid or has expired');
+      }
+
+      const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+
+      await this.prisma.$transaction([
+        this.prisma.passwordResetToken.update({
+          where: { id: record.id },
+          data: { isUsed: true },
+        }),
+        this.prisma.user.update({
+          where: { id: record.userId },
+          data: { password: hashedPassword },
+        }),
+      ]);
+    } catch (error) {
+      catchBlock(error);
     }
-
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-
-    await this.prisma.$transaction([
-      this.prisma.passwordResetToken.update({
-        where: { id: record.id },
-        data: { isUsed: true },
-      }),
-      this.prisma.user.update({
-        where: { id: record.userId },
-        data: { password: hashedPassword },
-      }),
-    ]);
   }
 
   // ─── Profile ──────────────────────────────────────────────────────────────
 
-  async getMe(userId: string): Promise<SafeUser> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+  async getMe(userId: number)  {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
 
-    if (!user) throw new NotFoundException('User not found');
-    return this.toSafeUser(user);
+      if (!user) throw new NotFoundException('User not found');
+      return this.toSafeUser(user);
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  private signToken(userId: string, email: string): string {
+  private signToken(userId: number, email: string): string {
     const payload = { sub: userId, email };
     const expiresIn = this.config.get<string>('JWT_EXPIRES_IN', '365d');
     // Cast needed: @nestjs/jwt expects StringValue from 'ms', but ConfigService returns string
@@ -347,7 +405,7 @@ export class AuthService {
   }
 
   private async issueEmailVerificationToken(
-    userId: string,
+    userId: number,
     email: string,
     fullName: string,
   ): Promise<void> {
@@ -374,7 +432,7 @@ export class AuthService {
   }
 
   private toSafeUser(user: {
-    id: string;
+    id: number;
     email: string;
     fullName: string;
     isEmailVerified: boolean;

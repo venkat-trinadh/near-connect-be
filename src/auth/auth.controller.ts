@@ -52,11 +52,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({ summary: 'Register a new account with email & password' })
   async register(@Body() dto: RegisterDto) {
-    const result = await this.authService.register(dto);
-    return {
-      message: 'Account created. Please verify your email to continue.',
-      data: result,
-    };
+    return this.authService.register(dto)
   }
 
   // ─── Email Verification ───────────────────────────────────────────────────
@@ -107,7 +103,8 @@ export class AuthController {
   @UseGuards(GoogleAuthGuard)
   @ApiOperation({ summary: 'Google OAuth callback — redirects to frontend with token' })
   googleCallback(@CurrentUser() user: object, @Res() res: Response) {
-    const { accessToken } = this.authService.googleLogin(user as SafeUser);
+    const loginResult = this.authService.googleLogin(user as SafeUser);
+    const accessToken = loginResult?.accessToken;
     const frontendUrl = this.config.getOrThrow<string>('FRONTEND_URL');
     return res.redirect(`${frontendUrl}/auth/callback?token=${accessToken}`);
   }

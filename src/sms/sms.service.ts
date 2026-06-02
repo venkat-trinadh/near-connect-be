@@ -1,11 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import twilio from 'twilio';
+import { catchBlock } from '../common/util/CatchBlock';
 
 @Injectable()
 export class SmsService {
   private readonly client: twilio.Twilio;
-  private readonly logger = new Logger(SmsService.name);
   private readonly fromNumber: string;
 
   constructor(private readonly config: ConfigService) {
@@ -17,14 +17,11 @@ export class SmsService {
   }
 
   async sendOtp(to: string, otp: string): Promise<void> {
-    const body = `Your NearConnect verification code is: ${otp}. It expires in 10 minutes. Do not share this code with anyone.`;
-
     try {
+      const body = `Your NearConnect verification code is: ${otp}. It expires in 10 minutes. Do not share this code with anyone.`;
       await this.client.messages.create({ body, from: this.fromNumber, to });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to send OTP to ${to}: ${message}`);
-      throw new Error('Failed to send verification code. Please try again.');
+    } catch (error) {
+      catchBlock(error);
     }
   }
 }

@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { catchBlock } from '../common/util/CatchBlock';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
@@ -19,9 +20,12 @@ export class MailService {
     fullName: string,
     token: string,
   ): Promise<void> {
-    const verifyUrl = `${this.config.getOrThrow('FRONTEND_URL')}/auth/verify-email?token=${token}`;
-
-    await this.send(to, `Verify your ${this.appName} email`, this.buildVerificationHtml(fullName, verifyUrl));
+    try {
+      const verifyUrl = `${this.config.getOrThrow('FRONTEND_URL')}/auth/verify-email?token=${token}`;
+      await this.send(to, `Verify your ${this.appName} email`, this.buildVerificationHtml(fullName, verifyUrl));
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   async sendPasswordResetEmail(
@@ -29,9 +33,12 @@ export class MailService {
     fullName: string,
     token: string,
   ): Promise<void> {
-    const resetUrl = `${this.config.getOrThrow('FRONTEND_URL')}/auth/reset-password?token=${token}`;
-
-    await this.send(to, `Reset your ${this.appName} password`, this.buildPasswordResetHtml(fullName, resetUrl));
+    try {
+      const resetUrl = `${this.config.getOrThrow('FRONTEND_URL')}/auth/reset-password?token=${token}`;
+      await this.send(to, `Reset your ${this.appName} password`, this.buildPasswordResetHtml(fullName, resetUrl));
+    } catch (error) {
+      catchBlock(error);
+    }
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────
@@ -46,7 +53,7 @@ export class MailService {
 
     if (error) {
       this.logger.error(`Failed to send email to ${to}: ${error.message}`);
-      throw new Error('Failed to send email. Please try again later.');
+      throw new InternalServerErrorException('Failed to send email. Please try again later.');
     }
   }
 
