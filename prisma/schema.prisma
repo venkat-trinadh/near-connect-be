@@ -11,6 +11,14 @@ generator client {
   moduleFormat  = "cjs"
 }
 
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Gender {
+  MALE
+  FEMALE
+  PREFER_NOT_TO_SAY
+}
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -25,6 +33,21 @@ model User {
   countryCode     String?  // e.g. "+1"
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  // ─── Onboarding profile fields ────────────────────────────────────────────
+  displayName           String?
+  bio                   String?
+  gender                Gender?
+  genderVisible         Boolean   @default(true)
+  avatarId              String?   // e.g. "male_01" or "female_07"
+  interests             String[]  @default([])
+  locationGranted       Boolean   @default(false)
+  latitude              Float?
+  longitude             Float?
+  locationArea          String?   // reverse-geocoded area name e.g. "Bandra West"
+  username              String?   @unique
+  onboardingStep        Int       @default(0)  // last completed step (0 = not started)
+  isOnboardingComplete  Boolean   @default(false)
 
   otpCodes                OtpCode[]
   emailVerificationTokens EmailVerificationToken[]
