@@ -12,7 +12,7 @@ async function bootstrap() {
   // ─── Security ─────────────────────────────────────────────────────────────
   app.use(helmet());
   app.enableCors({
-    origin: process.env.FRONTEND_URL || '*',
+    origin: [process.env.FRONTEND_URL || '*',"http://10.249.68.188:3000"],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

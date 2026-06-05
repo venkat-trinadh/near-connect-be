@@ -5,6 +5,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { DiscoverModule } from './discover/discover.module';
+import { ConnectionsModule } from './connections/connections.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { OnboardingModule } from './onboarding/onboarding.module';
     PrismaModule,
     AuthModule,
     OnboardingModule,
+    DiscoverModule,
+    ConnectionsModule,
   ],
 })
 export class AppModule {}
