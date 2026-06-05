@@ -19,6 +19,12 @@ enum Gender {
   PREFER_NOT_TO_SAY
 }
 
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -46,12 +52,20 @@ model User {
   longitude             Float?
   locationArea          String?   // reverse-geocoded area name e.g. "Bandra West"
   username              String?   @unique
+  occupation            String?   // e.g. "UX Designer"
+  languages             String[]  @default([])  // e.g. ["English", "Hindi"]
   onboardingStep        Int       @default(0)  // last completed step (0 = not started)
   isOnboardingComplete  Boolean   @default(false)
 
   otpCodes                OtpCode[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
+
+  // ─── Social relations ─────────────────────────────────────────────────────
+  sentRequests     ConnectionRequest[] @relation("SentRequests")
+  receivedRequests ConnectionRequest[] @relation("ReceivedRequests")
+  blockedByMe      Block[]             @relation("Blocker")
+  blockedMe        Block[]             @relation("Blocked")
 
   @@map("users")
 }
@@ -102,4 +116,36 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("password_reset_tokens")
+}
+
+// ─── Connection Requests ──────────────────────────────────────────────────────
+
+model ConnectionRequest {
+  id         Int              @id @default(autoincrement())
+  senderId   Int
+  receiverId Int
+  status     ConnectionStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  sender   User @relation("SentRequests",   fields: [senderId],   references: [id], onDelete: Cascade)
+  receiver User @relation("ReceivedRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@map("connection_requests")
+}
+
+// ─── Blocks ───────────────────────────────────────────────────────────────────
+
+model Block {
+  id        Int      @id @default(autoincrement())
+  blockerId Int
+  blockedId Int
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@map("blocks")
 }
