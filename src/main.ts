@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { BadRequestException, ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -8,6 +9,9 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // ─── WebSocket adapter ────────────────────────────────────────────────────
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   // ─── Security ─────────────────────────────────────────────────────────────
   app.use(helmet());
@@ -59,6 +63,14 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`🚀 NearConnect API running at http://localhost:${port}/api/v1`);
   console.log(`📚 Swagger docs at http://localhost:${port}/api/docs`);
+  console.log(`🔌 Socket.IO available at ws://localhost:${port}/messages`);
+
+  // ─── PeerJS server (voice/video calls — phase 2) ──────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { PeerServer } = require('peer') as typeof import('peer');
+  const peerPort = Number(process.env.PEER_PORT ?? 9000);
+  PeerServer({ port: peerPort, path: '/peerjs' });
+  console.log(`📞 PeerJS server running on port ${peerPort}`);
 }
 
 bootstrap();

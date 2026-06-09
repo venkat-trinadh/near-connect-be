@@ -25,6 +25,12 @@ enum ConnectionStatus {
   REJECTED
 }
 
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+}
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -56,16 +62,20 @@ model User {
   languages             String[]  @default([])  // e.g. ["English", "Hindi"]
   onboardingStep        Int       @default(0)  // last completed step (0 = not started)
   isOnboardingComplete  Boolean   @default(false)
+  lastSeenAt            DateTime?
 
   otpCodes                OtpCode[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
 
   // ─── Social relations ─────────────────────────────────────────────────────
-  sentRequests     ConnectionRequest[] @relation("SentRequests")
-  receivedRequests ConnectionRequest[] @relation("ReceivedRequests")
-  blockedByMe      Block[]             @relation("Blocker")
-  blockedMe        Block[]             @relation("Blocked")
+  sentRequests        ConnectionRequest[] @relation("SentRequests")
+  receivedRequests    ConnectionRequest[] @relation("ReceivedRequests")
+  blockedByMe         Block[]             @relation("Blocker")
+  blockedMe           Block[]             @relation("Blocked")
+  sentMessages        Message[]           @relation("SentMessages")
+  receivedMessages    Message[]           @relation("ReceivedMessages")
+  hiddenConversations HiddenConversation[]
 
   @@map("users")
 }
@@ -148,4 +158,41 @@ model Block {
 
   @@unique([blockerId, blockedId])
   @@map("blocks")
+}
+
+// ─── Messages ─────────────────────────────────────────────────────────────────
+
+model Message {
+  id                  Int           @id @default(autoincrement())
+  senderId            Int
+  receiverId          Int
+  content             String        @db.Text
+  status              MessageStatus @default(SENT)
+  isDeletedBySender   Boolean       @default(false)
+  isDeletedByReceiver Boolean       @default(false)
+  deletedForEveryone  Boolean       @default(false)
+  readAt              DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  sender   User @relation("SentMessages",     fields: [senderId],   references: [id], onDelete: Cascade)
+  receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, receiverId, createdAt(sort: Desc)])
+  @@index([receiverId, status])
+  @@map("messages")
+}
+
+// ─── Hidden Conversations ─────────────────────────────────────────────────────
+
+model HiddenConversation {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  otherUserId Int
+  hiddenAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, otherUserId])
+  @@map("hidden_conversations")
 }
