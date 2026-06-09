@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { DiscoverModule } from './discover/discover.module';
 import { ConnectionsModule } from './connections/connections.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ConnectionsModule } from './connections/connections.module';
     OnboardingModule,
     DiscoverModule,
     ConnectionsModule,
+    MessagesModule,
   ],
 })
 export class AppModule {}
