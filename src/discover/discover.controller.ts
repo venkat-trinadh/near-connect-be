@@ -3,6 +3,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseIntPipe,
   Query,
   Res,
   UseGuards,
@@ -21,6 +23,17 @@ import { DiscoverQueryDto } from './dto/discover-query.dto';
 @Controller('discover')
 export class DiscoverController {
   constructor(private readonly discover: DiscoverService) {}
+
+  @Get('profile/:userId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get public profile of a user by their ID' })
+  async getUserProfile(
+    @CurrentUser() user: object,
+    @Param('userId', ParseIntPipe) targetUserId: number,
+  ) {
+    const { id } = user as SafeUser;
+    return this.discover.getUserProfile(id, targetUserId);
+  }
 
   @Get('count')
   @HttpCode(HttpStatus.OK)

@@ -81,10 +81,117 @@ export class DiscoverService {
     };
   }
 
+  // ─── Get public profile of a specific user ────────────────────────────────
+
+  async getUserProfile(requesterId: number, targetUserId: number) {
+    try {
+      // Check for block in either direction
+      const block = await this.prisma.block.findFirst({
+        where: {
+          OR: [
+            { blockerId: requesterId, blockedId: targetUserId },
+            { blockerId: targetUserId, blockedId: requesterId },
+          ],
+        },
+      });
+      if (block) throw new NotFoundException('User not found');
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: {
+          id: true,
+          displayName: true,
+          username: true,
+          avatarId: true,
+          bio: true,
+          interests: true,
+          locationArea: true,
+          latitude: true,
+          longitude: true,
+          occupation: true,
+          languages: true,
+          isEmailVerified: true,
+          isPhoneVerified: true,
+          createdAt: true,
+          isOnboardingComplete: true,
+        },
+      });
+
+      if (!user || !user.isOnboardingComplete) throw new NotFoundException('User not found');
+
+      // Get requester's interests for shared-interest computation
+      const me = await this.prisma.user.findUnique({
+        where: { id: requesterId },
+        select: { interests: true, latitude: true, longitude: true },
+      });
+
+      const sharedInterests = me
+        ? me.interests.filter((i) => user.interests.includes(i))
+        : [];
+      const otherInterests = user.interests.filter((i) => !sharedInterests.includes(i));
+
+      // Distance (if both have coordinates)
+      let distance: string | null = null;
+      if (me?.latitude && me?.longitude && user.latitude && user.longitude) {
+        const distKm = haversineKm(me.latitude, me.longitude, user.latitude, user.longitude);
+        distance = distKm < 1
+          ? `${Math.round(distKm * 1000)} m`
+          : `${distKm.toFixed(1)} km`;
+      }
+
+      const joinedMs = Date.now() - new Date(user.createdAt).getTime();
+      const joinedDays = Math.floor(joinedMs / (1000 * 60 * 60 * 24));
+      const joined =
+        joinedDays < 7
+          ? `${joinedDays} day${joinedDays !== 1 ? 's' : ''} ago`
+          : joinedDays < 30
+            ? `${Math.floor(joinedDays / 7)} week${Math.floor(joinedDays / 7) !== 1 ? 's' : ''} ago`
+            : joinedDays < 365
+              ? `${Math.floor(joinedDays / 30)} month${Math.floor(joinedDays / 30) !== 1 ? 's' : ''} ago`
+              : `${Math.floor(joinedDays / 365)} year${Math.floor(joinedDays / 365) !== 1 ? 's' : ''} ago`;
+
+      return {
+        message: 'Profile fetched',
+        data: {
+          id: user.id,
+          name: user.displayName,
+          username: user.username,
+          avatarId: user.avatarId,
+          bio: user.bio ?? '',
+          area: user.locationArea ?? 'Nearby',
+          distance,
+          sharedInterests,
+          otherInterests,
+          interests: user.interests,
+          occupation: user.occupation ?? null,
+          languages: user.languages,
+          verified: user.isEmailVerified || user.isPhoneVerified,
+          joined,
+        },
+      };
+    } catch (error) {
+      catchBlock(error);
+    }
+  }
+
   // ─── Count nearby ─────────────────────────────────────────────────────────
 
   async getCount(userId: number, dto: DiscoverQueryDto) {
     try {
+      // Always refresh the caller's stored location so they stay discoverable.
+      // Fire-and-forget — do not await; never blocks the response.
+      this.prisma.user
+        .update({
+          where: { id: userId },
+          data: {
+            latitude: dto.lat,
+            longitude: dto.lng,
+            locationGranted: true,
+            ...(dto.area ? { locationArea: dto.area } : {}),
+          },
+        })
+        .catch(() => null);
+
       const me = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { locationArea: true },
@@ -123,6 +230,19 @@ export class DiscoverService {
 
   async getNext(userId: number, dto: DiscoverQueryDto) {
     try {
+      // Refresh caller's location on every search call as well.
+      this.prisma.user
+        .update({
+          where: { id: userId },
+          data: {
+            latitude: dto.lat,
+            longitude: dto.lng,
+            locationGranted: true,
+            ...(dto.area ? { locationArea: dto.area } : {}),
+          },
+        })
+        .catch(() => null);
+
       const me = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { interests: true },
@@ -163,6 +283,8 @@ export class DiscoverService {
         },
       });
 
+      console.log(`Discover: found ${candidates.length} candidates in bounding box, filtering by exact distance...`, candidates);
+
       // exact haversine filter
       const inRadius = candidates.filter(
         (u) => haversineKm(dto.lat, dto.lng, u.latitude!, u.longitude!) <= radius,
@@ -185,6 +307,7 @@ export class DiscoverService {
         .sort((a, b) => b._score - a._score);
 
       const best = ranked[0];
+      console.log(`Discover: best match user ${best.id}`, best);
       const distKm = best._dist;
 
       const sharedInterests = me.interests.filter((i) => best.interests.includes(i));
