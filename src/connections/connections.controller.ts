@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -8,7 +9,6 @@ import {
   ParseIntPipe,
   Patch,
   Post,
-  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -68,5 +68,21 @@ export class ConnectionsController {
   async reject(@CurrentUser() user: object, @Param('id', ParseIntPipe) requestId: number) {
     const { id } = user as SafeUser;
     return this.connections.respondToRequest(id, requestId, false);
+  }
+
+  @Delete('requests/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a pending sent connection request' })
+  async cancelSent(@CurrentUser() user: object, @Param('id', ParseIntPipe) requestId: number) {
+    const { id } = user as SafeUser;
+    return this.connections.cancelSentRequest(id, requestId);
+  }
+
+  @Delete(':requestId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove an accepted connection' })
+  async removeConnection(@CurrentUser() user: object, @Param('requestId', ParseIntPipe) requestId: number) {
+    const { id } = user as SafeUser;
+    return this.connections.removeConnection(id, requestId);
   }
 }

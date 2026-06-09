@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsArray, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsArray, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class DiscoverQueryDto {
@@ -19,6 +19,11 @@ export class DiscoverQueryDto {
   @Min(1)
   @Transform(({ value }) => parseFloat(value))
   radius?: number = 10;
+
+  @ApiPropertyOptional({ description: 'Human-readable area name (reverse-geocoded on client)', example: 'Banjara Hills' })
+  @IsOptional()
+  @IsString()
+  area?: string;
 
   @ApiPropertyOptional({
     description: 'Comma-separated user IDs already shown this session',

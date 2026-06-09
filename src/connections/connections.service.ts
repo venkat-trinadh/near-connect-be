@@ -176,6 +176,50 @@ export class ConnectionsService {
     }
   }
 
+  // ─── Cancel a sent request ────────────────────────────────────────────────
+
+  async cancelSentRequest(senderId: number, requestId: number) {
+    try {
+      const request = await this.prisma.connectionRequest.findUnique({
+        where: { id: requestId },
+        select: { id: true, senderId: true, status: true },
+      });
+
+      if (!request) throw new NotFoundException('Connection request not found');
+      if (request.senderId !== senderId) throw new BadRequestException('Not your request to cancel');
+      if (request.status !== 'PENDING') throw new BadRequestException('Request is no longer pending');
+
+      await this.prisma.connectionRequest.delete({ where: { id: requestId } });
+
+      return { message: 'Connection request cancelled', data: { requestId } };
+    } catch (error) {
+      catchBlock(error);
+    }
+  }
+
+  // ─── Remove an accepted connection ────────────────────────────────────────
+
+  async removeConnection(userId: number, requestId: number) {
+    try {
+      const request = await this.prisma.connectionRequest.findUnique({
+        where: { id: requestId },
+        select: { id: true, senderId: true, receiverId: true, status: true },
+      });
+
+      if (!request) throw new NotFoundException('Connection not found');
+      if (request.status !== 'ACCEPTED') throw new BadRequestException('No accepted connection found');
+      if (request.senderId !== userId && request.receiverId !== userId) {
+        throw new BadRequestException('Not your connection to remove');
+      }
+
+      await this.prisma.connectionRequest.delete({ where: { id: requestId } });
+
+      return { message: 'Connection removed', data: { requestId } };
+    } catch (error) {
+      catchBlock(error);
+    }
+  }
+
   // ─── Respond to a request ─────────────────────────────────────────────────
 
   async respondToRequest(userId: number, requestId: number, accept: boolean) {
